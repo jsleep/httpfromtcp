@@ -4,16 +4,20 @@ import (
 	"errors"
 	"io"
 	"strings"
+
+	"github.com/jsleep/httpfromtcp/internal/headers"
 )
 
 const (
-	initialized = iota
-	done        = iota
+	initialized    = iota
+	parsingHeaders = iota
+	done           = iota
 )
 
 type Request struct {
-	RequestLine  RequestLine
-	RequestState int
+	RequestLine RequestLine
+	State       int
+	Headers     headers.Headers
 }
 
 type RequestLine struct {
@@ -26,12 +30,19 @@ const BufferSize = 8
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
-	requestParser := Request{}
+	requestParser := Request{Headers: headers.NewHeaders()}
 	buffer := make([]byte, BufferSize)
 	bytes_read := 0
 	bytes_parsed := 0
+	hitEOF := false
+	last_parsed := 0
 
-	for requestParser.RequestState != done {
+	for requestParser.State != done {
+
+		if hitEOF && last_parsed == 0 {
+			// if we hit EOF and nothing was parsed, we can't continue
+			return nil, errors.New("EOF and can't parse further")
+		}
 
 		if bytes_read == len(buffer) {
 			// if we've filled the buffer, double the size and copy
@@ -44,25 +55,22 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		n, err := reader.Read(buffer[bytes_read:])
 		if err != nil {
 			if err == io.EOF {
-				requestParser.RequestState = done
-				break
+				hitEOF = true
+			} else {
+				return nil, err
 			}
-			return nil, err
 		}
-
 		bytes_read += n
 
-		bytes_parsed, err = requestParser.parse(buffer)
+		// parse the request starting from last parsed index
+		n, err = requestParser.parse(buffer[bytes_parsed:])
+		//fmt.Println(requestParser.RequestState)
 		if err != nil {
 			return nil, err
 		}
 
-		if bytes_parsed > 0 {
-			// if we parsed some bytes, copy the remaining bytes to the front of the buffer
-			copy(buffer, buffer[bytes_parsed:bytes_read])
-			bytes_read -= bytes_parsed
-		}
-
+		last_parsed = n
+		bytes_parsed += n
 	}
 
 	return &requestParser, nil
@@ -108,13 +116,13 @@ func parseRequestLine(requestString string) (*RequestLine, int, error) {
 		HttpVersion:   strings.Split(httpVersion, "/")[1],
 	}
 
-	return &res, len(([]byte)(line)), nil
+	return &res, len(line) + 2, nil
 }
 
 func (r *Request) parse(data []byte) (int, error) {
-	if r.RequestState == done {
+	if r.State == done {
 		return 0, errors.New("request already parsed")
-	} else if r.RequestState == initialized {
+	} else if r.State == initialized {
 		// parse request line
 		requestLine, bytes, err := parseRequestLine(string(data))
 		if err != nil {
@@ -126,7 +134,19 @@ func (r *Request) parse(data []byte) (int, error) {
 		}
 
 		r.RequestLine = *requestLine
-		r.RequestState = done
+		r.State = parsingHeaders
+		return bytes, nil
+	} else if r.State == parsingHeaders {
+		// parse headers
+		bytes, finished, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+
+		if finished {
+			r.State = done
+		}
+
 		return bytes, nil
 	} else {
 		return 0, errors.New("unknown state")
