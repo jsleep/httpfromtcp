@@ -27,6 +27,11 @@ func containsOnlyValidCharacters(s string) bool {
 	return true
 }
 
+func (h Headers) Get(key string) string {
+	// Convert key to lowercase to ensure case-insensitive access
+	return h[strings.ToLower(key)]
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	dataString := string(data)
 

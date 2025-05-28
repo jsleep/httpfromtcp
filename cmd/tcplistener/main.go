@@ -35,6 +35,12 @@ func main() {
 		for key, value := range req.Headers {
 			fmt.Printf("- %s: %s\n", key, value)
 		}
+		fmt.Println("Body:")
+		if len(req.Body) > 0 {
+			fmt.Println(string(req.Body))
+		} else {
+			fmt.Println("(no body)")
+		}
 	}
 
 }

@@ -3,6 +3,7 @@ package request
 import (
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/jsleep/httpfromtcp/internal/headers"
@@ -11,6 +12,7 @@ import (
 const (
 	initialized    = iota
 	parsingHeaders = iota
+	parsingBody    = iota
 	done           = iota
 )
 
@@ -18,6 +20,7 @@ type Request struct {
 	RequestLine RequestLine
 	State       int
 	Headers     headers.Headers
+	Body        []byte
 }
 
 type RequestLine struct {
@@ -30,7 +33,7 @@ const BufferSize = 8
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 
-	requestParser := Request{Headers: headers.NewHeaders()}
+	requestParser := Request{Headers: headers.NewHeaders(), State: initialized, Body: make([]byte, 0)}
 	buffer := make([]byte, BufferSize)
 	bytes_read := 0
 	bytes_parsed := 0
@@ -63,7 +66,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		bytes_read += n
 
 		// parse the request starting from last parsed index
-		n, err = requestParser.parse(buffer[bytes_parsed:])
+		n, err = requestParser.parse(buffer[bytes_parsed:bytes_read])
 		//fmt.Println(requestParser.RequestState)
 		if err != nil {
 			return nil, err
@@ -144,11 +147,45 @@ func (r *Request) parse(data []byte) (int, error) {
 		}
 
 		if finished {
-			r.State = done
+			bytes += 2 // account for the \r\n after headers
+			if r.Headers.Get("content-length") != "" {
+				r.State = parsingBody
+			} else {
+				r.State = done
+			}
 		}
 
 		return bytes, nil
+	} else if r.State == parsingBody {
+		// parse body
+		length, err := r.parseBody(data)
+		if err != nil {
+			return 0, err
+		}
+
+		return length, nil
 	} else {
 		return 0, errors.New("unknown state")
 	}
+}
+
+func (r *Request) parseBody(data []byte) (int, error) {
+	length, err := strconv.Atoi(r.Headers.Get("content-length"))
+	if err != nil {
+		return 0, errors.New("invalid content-length header: " + r.Headers.Get("content-length"))
+	}
+
+	bytes := min(length-len(r.Body), len(data))
+
+	r.Body = append(r.Body, data[:bytes]...)
+
+	if len(r.Body) > length {
+		return 0, errors.New("body length exceeds content-length header, expected: " + strconv.Itoa(length) + ", got: " + strconv.Itoa(len(r.Body)) + " full body: " + string(r.Body) + " full data: " + string(data))
+	}
+
+	if len(r.Body) == length {
+		r.State = done
+	}
+
+	return bytes, nil
 }
