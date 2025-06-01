@@ -2,6 +2,7 @@ package request
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -55,26 +56,37 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		// read into buffer starting at last index where read
-		n, err := reader.Read(buffer[bytes_read:])
-		if err != nil {
-			if err == io.EOF {
-				hitEOF = true
-			} else {
-				return nil, err
+		if !hitEOF {
+			n, err := reader.Read(buffer[bytes_read:])
+			if err != nil {
+				if err == io.EOF {
+					fmt.Println("Hit EOF")
+					hitEOF = true
+				} else {
+					return nil, err
+				}
 			}
+			bytes_read += n
 		}
-		bytes_read += n
 
 		// parse the request starting from last parsed index
-		n, err = requestParser.parse(buffer[bytes_parsed:bytes_read])
-		//fmt.Println(requestParser.RequestState)
-		if err != nil {
-			return nil, err
+		fmt.Println("Parsing: ", string(buffer[bytes_parsed:bytes_read]))
+
+		n := -1
+		var err error
+
+		for n != 0 && requestParser.State != done {
+			n, err = requestParser.parse(buffer[bytes_parsed:bytes_read])
+			if err != nil {
+				return nil, err
+			}
+			last_parsed = n
+			bytes_parsed += n
 		}
 
-		last_parsed = n
-		bytes_parsed += n
 	}
+
+	fmt.Println("Request state:", requestParser.State)
 
 	return &requestParser, nil
 }
@@ -188,4 +200,21 @@ func (r *Request) parseBody(data []byte) (int, error) {
 	}
 
 	return bytes, nil
+}
+
+func (req Request) Print() {
+	fmt.Println("Request line:")
+	fmt.Printf("- Method: %s\n", req.RequestLine.Method)
+	fmt.Printf("- Target: %s\n", req.RequestLine.RequestTarget)
+	fmt.Printf("- Version: %s\n", req.RequestLine.HttpVersion)
+	fmt.Println("Headers:")
+	for key, value := range req.Headers {
+		fmt.Printf("- %s: %s\n", key, value)
+	}
+	fmt.Println("Body:")
+	if len(req.Body) > 0 {
+		fmt.Println(string(req.Body))
+	} else {
+		fmt.Println("(no body)")
+	}
 }

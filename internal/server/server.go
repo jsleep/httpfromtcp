@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
+
+	"github.com/jsleep/httpfromtcp/internal/request"
+	"github.com/jsleep/httpfromtcp/internal/response"
 )
 
 type Server struct {
@@ -12,7 +15,7 @@ type Server struct {
 	Closed   atomic.Bool
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(port int, handler Handler) (*Server, error) {
 
 	ln, err := net.Listen("tcp", ":42069")
 	if err != nil {
@@ -22,7 +25,7 @@ func Serve(port int) (*Server, error) {
 	server := &Server{Port: port, Listener: ln}
 	server.Closed.Store(false)
 
-	go server.listen()
+	go server.listen(handler)
 
 	return server, nil
 }
@@ -35,7 +38,7 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) listen() {
+func (s *Server) listen(handler Handler) {
 	for {
 		if s.Closed.Load() {
 			fmt.Println("Server is closed, stopping listener")
@@ -47,35 +50,41 @@ func (s *Server) listen() {
 			continue
 		}
 		fmt.Println("accepted connection")
-		go s.handle(conn)
+		go s.handle(conn, handler)
 	}
 }
 
-const resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello World!\r\n"
+const respBody = "Hello World!\r\n"
 
-func (s *Server) handle(conn net.Conn) {
-	// req, err := request.RequestFromReader(conn)
-	// if err != nil {
-	// 	panic(err)
-	// }
+func (s *Server) handle(conn net.Conn, handler Handler) {
+	req, err := request.RequestFromReader(conn)
+	if err != nil {
+		fmt.Printf("Error parsing request: %v\n", err)
+	}
 
-	// fmt.Println("Request line:")
-	// fmt.Printf("- Method: %s\n", req.RequestLine.Method)
-	// fmt.Printf("- Target: %s\n", req.RequestLine.RequestTarget)
-	// fmt.Printf("- Version: %s\n", req.RequestLine.HttpVersion)
-	// fmt.Println("Headers:")
-	// for key, value := range req.Headers {
-	// 	fmt.Printf("- %s: %s\n", key, value)
-	// }
-	// fmt.Println("Body:")
-	// if len(req.Body) > 0 {
-	// 	fmt.Println(string(req.Body))
-	// } else {
-	// 	fmt.Println("(no body)")
-	// }
+	req.Print()
 
-	conn.Write([]byte(resp))
-	fmt.Println("Response sent")
+	w := response.Writer{Writer: conn}
+
+	handlerError := handler(w, req)
+
+	if handlerError != nil {
+		fmt.Printf("Error handling request: %v\n", handlerError)
+		return
+	}
 
 	conn.Close()
 }
+
+type Handler func(w response.Writer, req *request.Request) *HandlerError
+
+type HandlerError struct {
+	Code    response.StatusCode
+	Message string
+}
+
+// func (he *HandlerError) Error(w io.Writer) {
+// 	response.WriteStatusLine(w, he.Code)
+// 	response.WriteHeaders(w, response.GetDefaultHeaders(len(he.Message)))
+// 	response.WriteBody(w, []byte(he.Message))
+// }
