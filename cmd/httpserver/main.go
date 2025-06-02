@@ -109,14 +109,34 @@ func proxyHandler(w response.Writer, req *request.Request) {
 	trailers["X-Content-Sha256"] = hex.EncodeToString(hashBytes[:])
 	trailers["X-Content-Length"] = strconv.Itoa(bytesWritten)
 	w.WriteTrailers(trailers)
+}
 
+func videoHandler(w response.Writer, req *request.Request) {
+	body, err := os.ReadFile("assets/vim.mp4")
+	if err != nil {
+		log.Printf("Error reading video file: %v", err)
+		w.WriteStatusLine(500)
+		w.WriteHeaders(response.GetDefaultHeaders(0))
+		w.WriteBody([]byte("Error: " + err.Error()))
+		return
+	}
+
+	headers := response.GetDefaultHeaders(len(body))
+	headers["Content-Type"] = "video/mp4"
+
+	w.WriteStatusLine(200)
+	w.WriteHeaders(headers)
+	w.WriteBody(body)
 }
 
 var myHandler = server.Handler(func(w response.Writer, req *request.Request) *server.HandlerError {
 
 	var body string
 	var code response.StatusCode
-	if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
+	if req.RequestLine.RequestTarget == "/video" {
+		videoHandler(w, req)
+		return nil
+	} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
 		proxyHandler(w, req)
 		return nil
 	} else if req.RequestLine.RequestTarget == "/yourproblem" {
